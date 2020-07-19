@@ -25,7 +25,6 @@ func (g *Generate) Run(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return cmd.Help()
 	}
-	fmt.Printf("Your option one %s and args %v\n", g.BasePath, args)
 
 	if g.BasePath != "" {
 		apps, err := walkForApps(g.BasePath)
@@ -75,7 +74,7 @@ func walkForApps(base string) (apps []string, err error) {
 
 			err = yaml.Unmarshal(dat, &a)
 			if err != nil {
-				logrus.Warnf("Failed to unmarshal %s: %v", path, err)
+				//logrus.Warnf("Failed to unmarshal %s: %v", path, err)
 			}
 
 			if a.ApiVersion == "argoproj.io/v1alpha1" && a.Kind == "Application" {
