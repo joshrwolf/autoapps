@@ -48,8 +48,10 @@ Consider the following app of apps structure
 
 If you want `B` and `C` to dynamically inherit values completely encapsulated within `A`'s manifests:
 
+The "umbrella" application:
+
 ```yaml
-# Application A CRD
+# Application A CRD (umbrella app)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -75,8 +77,10 @@ spec:
     namespace: sample
 ```
 
+The subsequent "child" application
+
 ```yaml
-# Application A CRD
+# Application B CRD (child app)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
