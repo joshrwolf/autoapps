@@ -3,8 +3,7 @@ module github.com/joshrwolf/autoapps
 go 1.14
 
 require (
-	github.com/a8m/envsubst v1.2.0 // indirect
-	github.com/drone/envsubst v1.0.2
+	github.com/a8m/envsubst v1.2.0
 	github.com/rancher/wrangler-cli v0.0.0-20200712180548-91e38f783aa5
 	github.com/sirupsen/logrus v1.6.0
 	github.com/spf13/cobra v1.0.0
