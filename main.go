@@ -10,6 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"github.com/drone/envsubst"
+	"strings"
+)
+
+const (
+	autoAppsFlag = "autoapps"
 )
 
 type Generate struct {
@@ -27,11 +32,9 @@ func (g *Generate) Run(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			logrus.Errorf("Failed to collect apps: %v", err)
 		}
-		_ = apps
 
-		for _, app := range apps {
-			fmt.Println(string(app))
-		}
+		// Print out rendered apps to stdout for ArgoCD to read
+		fmt.Print(strings.Join(apps, "\n---\n"))
 	}
 
 	return nil
@@ -76,7 +79,7 @@ func walkForApps(base string) (apps []string, err error) {
 			}
 
 			if a.ApiVersion == "argoproj.io/v1alpha1" && a.Kind == "Application" {
-				if _, ok := a.Metadata.Annotations["autoapps"]; ok {
+				if _, ok := a.Metadata.Annotations[autoAppsFlag]; ok {
 					apps = append(apps, safeEnvSubst(string(dat)))
 				}
 			}
