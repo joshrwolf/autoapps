@@ -1,13 +1,14 @@
+# This is not included because autoapps is not set to true
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: app3
+  name: nonincludedapp
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    autoapps: "true"
+    autoapps: "skip"
 spec:
   project: default
 

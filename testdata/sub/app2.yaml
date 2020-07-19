@@ -1,3 +1,4 @@
+# This is included unless AUTOAPPS_SKIP_APP2 exists at runtime
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -7,6 +8,7 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "1"
+    autoapps: ${AUTOAPPS_SKIP_APP2:+"skip"}
 spec:
   project: default
 

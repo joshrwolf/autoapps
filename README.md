@@ -108,6 +108,33 @@ While the above is doable with any of the other templating tools, `autoapps` kee
 the `Application` CRD, enables runtime configuration, and simplifies "glue" templating with auto discovery of 
 `Applications`.
 
+### Dynamically skipping/ignoring applications
+
+`autoapps` will only render Applications where `metadata.annotations.autoapps` exists.  If the annotation is missing
+from the Application, then it will be ignored.  In cases where a user would want to dynamically include an Application
+based off some values from a parent Applicaiton, the exlusive value `skip` is used to ignore.  Combined with `envsubst`
+formatting, an Application can be included unless an environment variable is included:
+
+```yaml
+# NOTE: Portions of the complete spec are skipped below for brevity
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mocha
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    autoapps: "${AUTOAPPS_SKIP_MOCHA:+skip}"
+```
+
+In the above example, if the Application was autodiscovered by a parent application that defined `AUTOAPPS_SKIP_APP1`,
+then the application `mocha` as a whole will be skipped.
+
+The syntax above reads as:
+
+```
+If AUTO_APPS_SKIP_MOCHA is set, evaluate expression as skip, otherwise as empty string
+```
+
 ## Work in progress
 
 * "safe" environment variable substitution

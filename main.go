@@ -9,12 +9,15 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"github.com/drone/envsubst"
+	"github.com/a8m/envsubst"
 	"strings"
 )
 
 const (
 	autoAppsFlag = "autoapps"
+	autoAppsAnnotationSkipVal = "skip"
+	argoAPIVersion = "argoproj.io/v1alpha1"
+	argoAppKind = "Application"
 )
 
 type Generate struct {
@@ -58,6 +61,18 @@ type MiniApp struct {
 	}
 }
 
+type App struct {
+	ApiVersion string `yaml:"apiVersion"`
+	Kind string `yaml:"kind"`
+	Metadata struct {
+		Annotations map[string]string `yaml:"annotations"`
+	}
+}
+
+type Metadata struct {
+	Annotations map[string]string `yaml:"annotations"`
+}
+
 func walkForApps(base string) (apps []string, err error) {
 	err = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -66,21 +81,22 @@ func walkForApps(base string) (apps []string, err error) {
 
 		// Only care about valid yaml files
 		if ext := filepath.Ext(path); ext == ".yaml" || ext == ".yml" {
-			var a MiniApp
-			dat, err := ioutil.ReadFile(path)
+			data, err := ioutil.ReadFile(path)
 			if err != nil {
 				return err
 			}
 
-			err = yaml.Unmarshal(dat, &a)
-			if err != nil {
-				//logrus.Warnf("Failed to unmarshal %s: %v", path, err)
+			// TODO: This whole thing is some laaaazy logic flow
+			isApp, _ := isApp(data)
+			if !isApp {
+				// Bailout if it's not an app, we don't care anymore
+				return nil
 			}
 
-			if a.ApiVersion == "argoproj.io/v1alpha1" && a.Kind == "Application" {
-				if _, ok := a.Metadata.Annotations[autoAppsFlag]; ok {
-					apps = append(apps, safeEnvSubst(string(dat)))
-				}
+			// Render envsubst
+			render, substitutedApp := safeEnvSubst(data)
+			if render {
+				apps = append(apps, substitutedApp)
 			}
 		}
 		return nil
@@ -93,13 +109,59 @@ func walkForApps(base string) (apps []string, err error) {
 	return apps, nil
 }
 
+func isApp(data []byte) (bool, App) {
+	var a App
+	isApp := false
+
+	err := yaml.Unmarshal(data, &a)
+	if err != nil {}
+
+	// Check if this is an app
+	if a.ApiVersion == argoAPIVersion && a.Kind == argoAppKind {
+		isApp = true
+	}
+
+	return isApp, a
+}
+
+func isAutoApp(data []byte) (bool, MiniApp) {
+	var m MiniApp
+
+	err := yaml.Unmarshal(data, &m)
+	// Gobble up errors, need to keep stdout clean and stderr empty
+	if err != nil {}
+
+	// Check if this is an autoapp
+	if m.ApiVersion == argoAPIVersion && m.Kind	== argoAppKind {
+		if _, ok := m.Metadata.Annotations[autoAppsFlag]; ok {
+			return true, m
+		}
+	}
+
+	return false, m
+}
+
 // TODO: Need to implement a way to make this "safe" and only support _allowed_ environment variables
 //		 Make it obvious how "allowed" envs are determined
-func safeEnvSubst(original string) string {
-	substituted, err := envsubst.EvalEnv(original)
+func safeEnvSubst(original []byte) (bool, string) {
+	render := false
+
+	substituted, err := envsubst.Bytes(original)
 	if err != nil {
 		logrus.Fatalf("Failed to substitute: %v", err)
 	}
 
-	return substituted
+	// Only return valid yaml if annotations trigger is true
+	var a App
+	err = yaml.Unmarshal(substituted, &a)
+	if err != nil {}
+
+	if val, ok := a.Metadata.Annotations[autoAppsFlag]; ok {
+		if val != autoAppsAnnotationSkipVal {
+			render = true
+			return render, string(substituted)
+		}
+	}
+
+	return render, ""
 }
