@@ -8,7 +8,9 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    autoapps: ${AUTOAPPS_SKIP_APP2:+"skip"}
+
+    # Still included because not set to "true"
+    autoapps-skip-discovery: ""
 spec:
   project: default
 

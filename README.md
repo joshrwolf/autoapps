@@ -2,13 +2,11 @@
 
 As of today, there is no formal support for the app of apps pattern, and the ArgoCD ecosystem lacks a construct where `Applications` can inherit easily from other `Applications`.
 
-`auto-apps` is a stupid simple cli intended to bridge the gap until `ApplicationSets` are officially supported in ArgoCD.
+`auto-apps` is a stupid simple cli intended to bridge the gap until `ApplicationSets` are officially supported in ArgoCD. It is designed to fill a gap in the ArgoCD app of apps pattern, where multiple applications are bootstrapped from a single "umbrella" application.
 
-`auto-apps` is designed to fill a gap in the ArgoCD app of apps pattern, where multiple applications are bootstrapped from a single "umbrella" application.
+## Features
 
-`auto-apps` solves this by the following:
-
-__`Application` auto discovery__:
+### `Application` auto discovery
 
 Starting from a given `spec.source.path`, `autoapps` will traverse a git repository looking for:
 
@@ -16,24 +14,63 @@ Starting from a given `spec.source.path`, `autoapps` will traverse a git reposit
 * manifests of `type: argoproj.io/v1alpha1` and `kind: Application`
 * manifests with an annotation present of `autoapps`
 
-__Isolated `Application` substitution__
+### Simple `Application` templating
 
 Using [custom argocd tooling](https://argoproj.github.io/argo-cd/user-guide/config-management-plugins/), `Applications` 
 can utilize the `spec.source.plugin` spec to template child groups of `Applications`.
 
+`autoapps` uses [fasttemplate](https://github.com/valyala/fasttemplate) to perform its substitution.  Since ArgoCD currently only supports specifying environment variables within plugins, `autoapps` accepts two forms of substitution:
+
+__`AUTOAPPS_` prefixed__:
+
+Variables prefixed with `AUTOAPPS_` are valid candidates for templating, and will have their prefix stripped before templating.  For example:
+
 ```yaml
+# Parent Application
+...
 spec:
   source:
     plugin:
       name: autoapps
       env:
-      - name: ARGOCD_SOME_VAR
-        value: donkey
+      - name: AUTOAPPS_foo
+        value: bar
+...
+
+# Child Application
+...
+spec:
+  source:
+    path: {{foo}}
+...
+```
+
+Identifying valid variables for templating via `AUTOAPPS_` prefix protects abuse against using protected or private system environment variables as template values.  However, one of the restrictions of this means you're limited to valid environment variable names.
+
+__Builtin ArgoCD variables__:
+
+ArgoCD uses a couple builtin environment variables at runtime that are useful:
+
+```yaml
+# Parent Application
+...
+spec:
+  source:
+    plugin:
+      name: autoapps
+...
+
+# Child Application
+...
+spec:
+  source:
+    targetRevision: {{ARGOCD_APP_SOURCE_TARGET_REVISION}}
+...
 ```
 
 ## Examples
 
-Consider the following app of apps structure
+Consider the following app of apps structure:
 
 ```bash
 # Application A syncs Application B and C, which subsequently deploy manifests
@@ -90,13 +127,12 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    autoapps: "true"
 spec:
-  project: ${ARGOCD_PROJECT}
+  project: {{ARGOCD_PROJECT}}
 
   source:
-    repoURL: https://github.com/joshrwolf/core-bootstrap
-    targetRevision: ${ARGOCD_APP_SOURCE_TARGET_REVISION}    # leverage standard build environment variables
+    repoURL: {{project_repo}}
+    targetRevision: {{ARGOCD_APP_SOURCE_TARGET_REVISION}}    # leverage standard build environment variables
     path: apps/istio
 
   destination:
@@ -110,10 +146,7 @@ the `Application` CRD, enables runtime configuration, and simplifies "glue" temp
 
 ### Dynamically skipping/ignoring applications
 
-`autoapps` will only render Applications where `metadata.annotations.autoapps` exists.  If the annotation is missing
-from the Application, then it will be ignored.  In cases where a user would want to dynamically include an Application
-based off some values from a parent Applicaiton, the exlusive value `skip` is used to ignore.  Combined with `envsubst`
-formatting, an Application can be included unless an environment variable is included:
+`autoapps` will skip any applications which are annotated as follows:
 
 ```yaml
 # NOTE: Portions of the complete spec are skipped below for brevity
@@ -122,19 +155,30 @@ kind: Application
 metadata:
   name: mocha
   annotations:
-    argocd.argoproj.io/sync-wave: "1"
-    autoapps: "${AUTOAPPS_SKIP_MOCHA:+skip}"
+    autoapps-skip-discovery: "true"
+...
 ```
 
-In the above example, if the Application was autodiscovered by a parent application that defined `AUTOAPPS_SKIP_APP1`,
-then the application `mocha` as a whole will be skipped.
+To make this dynamic, you can leverage variable substitution from the parent application as follows:
 
-The syntax above reads as:
+```yaml
+# Parent Application
+...
+spec:
+  source:
+    plugin:
+      name: autoapps
+      env:
+      - name: AUTOAPPS_skip_mocha
+        value: "true"
+...
 
+# Child Application
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mocha
+  annotations:
+    autoapps-skip-discovery: "{{skip_mocha}}"
+...
 ```
-If AUTO_APPS_SKIP_MOCHA is set, evaluate expression as skip, otherwise as empty string
-```
-
-## Work in progress
-
-* "safe" environment variable substitution

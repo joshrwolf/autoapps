@@ -3,22 +3,33 @@ package main
 import (
 	"fmt"
 	"github.com/rancher/wrangler-cli"
-	"gopkg.in/yaml.v2"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"github.com/valyala/fasttemplate"
+	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"os"
 	"path/filepath"
-	"github.com/a8m/envsubst"
 	"strings"
 )
 
 const (
-	autoAppsFlag = "autoapps"
-	autoAppsAnnotationSkipVal = "skip"
-	argoAPIVersion = "argoproj.io/v1alpha1"
-	argoAppKind = "Application"
+	autoAppsFlag                   = "autoapps"
+	argoAPIVersion                 = "argoproj.io/v1alpha1"
+	argoAppKind                    = "Application"
+	autoAppsEnvPrefix              = "AUTOAPPS_"
+	autoAppsAnnotationSkipDetector = "autoapps-skip-discovery"
 )
+
+// App is a bare bones struct barely descriptive enough to recognize ArgoCD Application CRDs
+// NOTE: Purposely not using the argoproj types here, keep it simple!
+type App struct {
+	ApiVersion string `yaml:"apiVersion"`
+	Kind       string `yaml:"kind"`
+	Metadata   struct {
+		Annotations map[string]string `yaml:"annotations"`
+	}
+}
 
 type Generate struct {
 	BasePath string `name:"basePath" usage:"Base path to begin traversal"`
@@ -29,15 +40,19 @@ func (g *Generate) Run(cmd *cobra.Command, args []string) error {
 		return cmd.Help()
 	}
 
-	if g.BasePath != "" {
-		apps, err := walkForApps(g.BasePath)
-		if err != nil {
-			logrus.Errorf("Failed to collect apps: %v", err)
-		}
-
-		// Print out rendered apps to stdout for ArgoCD to read
-		fmt.Print(strings.Join(apps, "\n---\n"))
+	if g.BasePath == "" {
+		logrus.Fatal("You must specify a --basePath!")
 	}
+
+	apps, err := walkForApps(g.BasePath)
+	if err != nil {
+		logrus.Errorf("Failed to collect apps: %v", err)
+	}
+
+	// Remove any apps that don't want to be included
+
+	// Print out rendered apps to stdout for ArgoCD to read
+	fmt.Print(strings.Join(apps, "\n---\n"))
 
 	return nil
 }
@@ -45,35 +60,13 @@ func (g *Generate) Run(cmd *cobra.Command, args []string) error {
 func main() {
 	root := cli.Command(&Generate{}, cobra.Command{
 		Short: "Base path",
-		Long: "Base path long description",
+		Long:  "Base path long description",
 	})
 	cli.Main(root)
 }
 
-// MiniApp is a bare bones struct barely descriptive enough to recognize ArgoCD Application CRDs
-// NOTE: Purposely not using the argoproj types here, keep it simple!
-// TODO: Only recognize apps annotated a certain way
-type MiniApp struct {
-	ApiVersion string `yaml:"apiVersion"`
-	Kind string `yaml:"kind"`
-	Metadata struct {
-		Annotations map[string]string `yaml:"annotations"`
-	}
-}
-
-type App struct {
-	ApiVersion string `yaml:"apiVersion"`
-	Kind string `yaml:"kind"`
-	Metadata struct {
-		Annotations map[string]string `yaml:"annotations"`
-	}
-}
-
-type Metadata struct {
-	Annotations map[string]string `yaml:"annotations"`
-}
-
 func walkForApps(base string) (apps []string, err error) {
+	var appsData [][]byte
 	err = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -86,17 +79,8 @@ func walkForApps(base string) (apps []string, err error) {
 				return err
 			}
 
-			// TODO: This whole thing is some laaaazy logic flow
-			isApp, _ := isApp(data)
-			if !isApp {
-				// Bailout if it's not an app, we don't care anymore
-				return nil
-			}
-
-			// Render envsubst
-			render, substitutedApp := safeEnvSubst(data)
-			if render {
-				apps = append(apps, substitutedApp)
+			if ok := isAutoApp(data); ok {
+				appsData = append(appsData, data)
 			}
 		}
 		return nil
@@ -106,10 +90,23 @@ func walkForApps(base string) (apps []string, err error) {
 		return apps, err
 	}
 
+	// Render apps template
+	for _, data := range appsData {
+		rendered := renderTemplate(string(data))
+
+		// Determine if we need to skip it once it's read
+		include := isAutoApp([]byte(rendered))
+
+		if include {
+			apps = append(apps, rendered)
+		}
+	}
+
 	return apps, nil
 }
 
-func isApp(data []byte) (bool, App) {
+// isAutoApp returns true/false based on whether or not a valid yaml file is a non skipped valid Application CR
+func isAutoApp(data []byte) bool {
 	var a App
 	isApp := false
 
@@ -121,47 +118,42 @@ func isApp(data []byte) (bool, App) {
 		isApp = true
 	}
 
-	return isApp, a
-}
-
-func isAutoApp(data []byte) (bool, MiniApp) {
-	var m MiniApp
-
-	err := yaml.Unmarshal(data, &m)
-	// Gobble up errors, need to keep stdout clean and stderr empty
-	if err != nil {}
-
-	// Check if this is an autoapp
-	if m.ApiVersion == argoAPIVersion && m.Kind	== argoAppKind {
-		if _, ok := m.Metadata.Annotations[autoAppsFlag]; ok {
-			return true, m
+	// Check if application is supposed to be skipped
+	if val, ok := a.Metadata.Annotations[autoAppsAnnotationSkipDetector]; ok {
+		if val == "true" {
+			isApp = false
 		}
 	}
 
-	return false, m
+	return isApp
 }
 
-// TODO: Need to implement a way to make this "safe" and only support _allowed_ environment variables
-//		 Make it obvious how "allowed" envs are determined
-func safeEnvSubst(original []byte) (bool, string) {
-	render := false
+func renderTemplate(template string) string {
+	t := fasttemplate.New(template, "{{", "}}")
 
-	substituted, err := envsubst.Bytes(original)
-	if err != nil {
-		logrus.Fatalf("Failed to substitute: %v", err)
-	}
+	validEnvs := currentEnvToMap(autoAppsEnvPrefix)
+	rendered := t.ExecuteString(validEnvs)
+	return rendered
+}
 
-	// Only return valid yaml if annotations trigger is true
-	var a App
-	err = yaml.Unmarshal(substituted, &a)
-	if err != nil {}
+// currentEnvToMap will search for all environment variables with `prefix`, and convert their values into a map suitable for fasttemplate
+func currentEnvToMap(prefix string) map[string]interface{} {
+	envs := make(map[string]interface{})
 
-	if val, ok := a.Metadata.Annotations[autoAppsFlag]; ok {
-		if val != autoAppsAnnotationSkipVal {
-			render = true
-			return render, string(substituted)
+	for _, e := range os.Environ() {
+		pair := strings.SplitN(e, "=", 2)
+
+		// Trim detector prefix
+		if strings.HasPrefix(pair[0], prefix) {
+			trimmed := strings.TrimPrefix(pair[0], prefix)
+			envs[trimmed] = pair[1]
+		}
+
+		// Always include ARGOCD_ variables
+		if strings.HasPrefix(pair[0], "ARGOCD_") {
+			envs[pair[0]] = pair[1]
 		}
 	}
 
-	return render, ""
+	return envs
 }

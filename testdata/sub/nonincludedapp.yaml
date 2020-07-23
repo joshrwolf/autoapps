@@ -8,13 +8,13 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    autoapps: "skip"
+    autoapps-skip-discovery: "true"
 spec:
   project: default
 
   source:
     repoURL: https://github.com/joshrwolf/app3
-    targetRevision: ${ARGOCD_APP_SOURCE_TARGET_REVISION}
+    targetRevision: {{ARGOCD_APP_SOURCE_TARGET_REVISION}}
     path: app3
 
   # Destination cluster and namespace to deploy the application
