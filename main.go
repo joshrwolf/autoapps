@@ -17,6 +17,7 @@ const (
 	autoAppsFlag                   = "autoapps"
 	argoAPIVersion                 = "argoproj.io/v1alpha1"
 	argoAppKind                    = "Application"
+	argoProjectKind                = "AppProject"
 	autoAppsEnvPrefix              = "AUTOAPPS_"
 	autoAppsAnnotationSkipDetector = "autoapps-skip-discovery"
 )
@@ -44,12 +45,15 @@ func (g *Generate) Run(cmd *cobra.Command, args []string) error {
 		logrus.Fatal("You must specify a --basePath!")
 	}
 
-	apps, err := walkForApps(g.BasePath)
+	projects, apps, err := walkForArgo(g.BasePath)
 	if err != nil {
 		logrus.Errorf("Failed to collect apps: %v", err)
 	}
 
-	// Remove any apps that don't want to be included
+	// Print out rendered projects to stdout for ArgoCD to read
+	fmt.Print(strings.Join(projects, "\n---\n"))
+
+	fmt.Println("---")
 
 	// Print out rendered apps to stdout for ArgoCD to read
 	fmt.Print(strings.Join(apps, "\n---\n"))
@@ -65,8 +69,10 @@ func main() {
 	cli.Main(root)
 }
 
-func walkForApps(base string) (apps []string, err error) {
+func walkForArgo(base string) (projects []string, apps []string, err error) {
 	var appsData [][]byte
+	var projectData [][]byte
+
 	err = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -79,7 +85,13 @@ func walkForApps(base string) (apps []string, err error) {
 				return err
 			}
 
-			if ok := isAutoApp(data); ok {
+			// Check AppProjects
+			if ok := isAutoApp(data, argoAPIVersion, argoProjectKind); ok {
+				projectData = append(appsData, data)
+			}
+
+			// Check Applications
+			if ok := isAutoApp(data, argoAPIVersion, argoAppKind); ok {
 				appsData = append(appsData, data)
 			}
 		}
@@ -87,7 +99,19 @@ func walkForApps(base string) (apps []string, err error) {
 	})
 
 	if err != nil {
-		return apps, err
+		return projects, apps, err
+	}
+
+	// Render project template
+	for _, data := range projectData {
+		rendered := renderTemplate(string(data))
+
+		// Determine if we need to skip it once it's read
+		include := isAutoApp([]byte(rendered), argoAPIVersion, argoProjectKind)
+
+		if include {
+			projects = append(projects, rendered)
+		}
 	}
 
 	// Render apps template
@@ -95,18 +119,18 @@ func walkForApps(base string) (apps []string, err error) {
 		rendered := renderTemplate(string(data))
 
 		// Determine if we need to skip it once it's read
-		include := isAutoApp([]byte(rendered))
+		include := isAutoApp([]byte(rendered), argoAPIVersion, argoAppKind)
 
 		if include {
 			apps = append(apps, rendered)
 		}
 	}
 
-	return apps, nil
+	return projects, apps, nil
 }
 
 // isAutoApp returns true/false based on whether or not a valid yaml file is a non skipped valid Application CR
-func isAutoApp(data []byte) bool {
+func isAutoApp(data []byte, apiVersion string, kind string) bool {
 	var a App
 	isApp := false
 
@@ -114,7 +138,7 @@ func isAutoApp(data []byte) bool {
 	if err != nil {}
 
 	// Check if this is an app
-	if a.ApiVersion == argoAPIVersion && a.Kind == argoAppKind {
+	if a.ApiVersion == apiVersion && a.Kind == kind {
 		isApp = true
 	}
 
